@@ -532,38 +532,36 @@ def main() -> int:
         ), oversized_unchanged_reason
         assert state_path.read_text(encoding="utf-8") == state_before_rejected_refresh
 
-        missing_checkpoint = payload(
-            run_cli(
-                registry_path,
-                runtime,
-                check=True,
-            )
+        # A material closeout with no vision decision at all is refused at the
+        # input boundary. It used to be recorded with a `missing_required`
+        # checkpoint, which did not skip the decision, only deferred it: the next
+        # wake opened on a checkpoint-missing replan obligation and spent itself
+        # reconstructing facts that were in hand here. A reason still cannot stand
+        # in for a first baseline -- that is the `missing_baseline` case above.
+        missing_checkpoint = run_cli(
+            registry_path,
+            runtime,
+            check=False,
         )
-        assert missing_checkpoint["vision_checkpoint"]["required"] is True, (
-            missing_checkpoint
+        assert missing_checkpoint.returncode == 1, missing_checkpoint
+        missing_checkpoint_error = payload(missing_checkpoint)["error"]
+        assert "must carry its own vision decision" in missing_checkpoint_error, (
+            missing_checkpoint_error
         )
-        assert missing_checkpoint["vision_checkpoint"]["satisfied"] is False, (
-            missing_checkpoint
-        )
-        assert missing_checkpoint["vision_checkpoint"]["decision"] == "missing_required", (
-            missing_checkpoint
-        )
-        assert missing_checkpoint["vision_checkpoint"]["required_resolution"] == [
-            "write_vision_patch",
-            "record_unchanged_reason",
-        ], missing_checkpoint
+        for named in (
+            "--agent-vision-json",
+            "--vision-unchanged-reason",
+        ):
+            assert named in missing_checkpoint_error, missing_checkpoint_error
+        # The refusal writes nothing, so the durable state is untouched.
+        assert state_path.read_text(encoding="utf-8") == state_before_rejected_refresh
         missing_markdown = run_cli(
             registry_path,
             runtime,
             output_format="markdown",
-            check=True,
-        ).stdout
-        assert "vision_checkpoint_required_resolution:" in missing_markdown, (
-            missing_markdown
+            check=False,
         )
-        assert "write_vision_patch,record_unchanged_reason" in missing_markdown, (
-            missing_markdown
-        )
+        assert missing_markdown.returncode == 1, missing_markdown
 
         no_agent_inline_result = run_cli(
             registry_path,
@@ -620,6 +618,12 @@ def main() -> int:
                     "--progress-scope",
                     "goal",
                 ],
+                # A durable Next Action update is a material closeout, so it
+                # carries its own vision decision like any other.
+                inline_vision_args=[
+                    "--vision-unchanged-reason",
+                    "The durable route changed; the vision itself did not.",
+                ],
                 check=True,
             )
         )
@@ -639,6 +643,12 @@ def main() -> int:
                 "Continue with access_" + "key=" + "AKIA" + "1234567890ABCDEF",
                 "--progress-scope",
                 "goal",
+            ],
+            # The durable update is refused for its own reason: the secret check
+            # runs first, so the vision decision is supplied to reach it.
+            inline_vision_args=[
+                "--vision-unchanged-reason",
+                "The durable route changed; the vision itself did not.",
             ],
             check=False,
         )

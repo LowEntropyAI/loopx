@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from loopx.control_plane.quota.effect_program import SettlementIdentity
 from loopx.control_plane.work_items.refresh_recommendation import (
     RECOMMENDED_ACTION_SOURCE_DEFAULT,
@@ -252,6 +254,10 @@ def test_refresh_state_run_reuses_exact_turn_selection(tmp_path: Path) -> None:
         delivery_batch_scale="single_surface",
         delivery_outcome="outcome_progress",
         delivery_workspace_path=project,
+        # A material closeout on an agent lane carries its own vision decision;
+        # this segment did not advance this agent's vision, so it says so rather
+        # than leaving the frontier to ask on the next wake.
+        vision_unchanged_reason="the turn only resolved the next recommended action",
         todo_id=identity.todo_id,
         turn_instance_id=identity.turn_instance_id,
         agent_id=identity.agent_id,
@@ -276,3 +282,104 @@ def test_refresh_state_run_reuses_exact_turn_selection(tmp_path: Path) -> None:
         "selection_binding": "heartbeat_receipt",
         "claim_required_before_work": False,
     }
+
+
+def test_a_material_agent_lane_closeout_must_carry_its_vision_decision(
+    tmp_path: Path,
+) -> None:
+    """The decision is available here and nowhere later.
+
+    The frontier reads the per-agent vision decision from the run that closed the
+    segment. A material closeout that omits it does not skip the decision, it
+    defers it: the next wake opens on a checkpoint-missing replan obligation and
+    spends itself reconstructing facts that were in hand at closeout time. So the
+    closeout refuses, and names what to pass.
+    """
+
+    goal_id = "goal-shared-refresh"
+    project = tmp_path / "project"
+    state_path = project / ".codex" / "goals" / goal_id / "ACTIVE_GOAL_STATE.md"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(TWO_AGENT_STATE, encoding="utf-8")
+    registry_path = tmp_path / "registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "goals": [
+                    {
+                        "id": goal_id,
+                        "status": "active",
+                        "repo": str(project),
+                        "state_file": str(state_path.relative_to(project)),
+                        "coordination": {
+                            "agent_model": "peer_v1",
+                            "registered_agents": ["agent-a", "agent-b"],
+                        },
+                        "workspace_guard_policy": {
+                            "peer_independent_worktree_required": False,
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime_root = tmp_path / "runtime"
+    identity = SettlementIdentity(
+        goal_id=goal_id,
+        agent_id="agent-a",
+        todo_id="todo_agent_a",
+        turn_instance_id="turn-agent-a",
+    )
+    _write_turn_receipt(runtime_root, identity=identity)
+
+    def closeout(**overrides: object) -> dict:
+        call: dict[str, object] = {
+            "registry_path": registry_path,
+            "runtime_root_override": str(runtime_root),
+            "goal_id": goal_id,
+            "project": project,
+            "state_file": None,
+            "classification": "validated_progress",
+            "recommended_action": None,
+            "delivery_batch_scale": "single_surface",
+            "delivery_outcome": "outcome_progress",
+            "delivery_workspace_path": project,
+            "todo_id": identity.todo_id,
+            "turn_instance_id": identity.turn_instance_id,
+            "agent_id": identity.agent_id,
+            "dry_run": True,
+            "sync_global": False,
+        }
+        call.update(overrides)
+        return refresh_state_run(**call)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="must carry its own vision decision"):
+        closeout()
+
+    # A durable Next Action update is the other material closeout the contract
+    # names, so it owes the same decision.
+    with pytest.raises(ValueError, match="must carry its own vision decision"):
+        closeout(
+            progress_scope="goal",
+            next_action="Publish the lane's release checklist",
+            todo_id=None,
+            turn_instance_id=None,
+            delivery_workspace_path=None,
+        )
+
+    # Declaring the vision unchanged is a decision, and satisfies the contract.
+    assert closeout(
+        vision_unchanged_reason="the segment did not change this vision"
+    )["ok"] is True
+
+    # An in-flight continuation has not closed a segment, so it owes no decision.
+    assert closeout(delivery_boundary="in_flight_continuation")["ok"] is True
+
+    # A non-material outcome is not a material closeout either.
+    assert closeout(
+        delivery_outcome="surface_only",
+        delivery_workspace_path=None,
+        todo_id=None,
+        turn_instance_id=None,
+    )["ok"] is True

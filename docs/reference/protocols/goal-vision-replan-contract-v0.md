@@ -232,6 +232,15 @@ Valid checkpoint decisions are:
 - `not_required`: no material closeout trigger was present, including a valid
   typed in-flight continuation.
 
+The closeout enforces this requirement at its input boundary: when the run names
+an `agent_id` and closes a material segment -- a material `delivery_outcome` on
+the agent lane, or a durable `## Next Action` update -- at the
+`semantic_closeout` boundary without a vision packet and without an unchanged
+reason, `refresh-state` refuses the writeback and names the flags that satisfy
+it, instead of recording the segment and leaving the decision to the next wake.
+An in-flight continuation is unaffected, and so is a closeout that carries no
+`agent_id`, because a per-agent decision requires an agent to make it.
+
 `missing_required` is not a chat reminder. Status keeps it in compact run
 history, quota filters it by current `agent_id`, and goal-frontier projection
 turns it into `acceptance_gaps[]`. If the current agent has no runnable

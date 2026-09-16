@@ -15,9 +15,13 @@ from .control_plane.work_items.delivery_batch_scale import (
 )
 from .control_plane.work_items.delivery_outcome import (
     ACCOUNTABLE_DELIVERY_OUTCOMES,
+    MATERIAL_DELIVERY_OUTCOMES,
     DELIVERY_OUTCOME_CHOICES as DELIVERY_OUTCOME_CHOICES,
     qualifies_turn_scoped_settlement,
     require_delivery_outcome,
+)
+from .control_plane.turn_driver.delivery_continuity import (
+    DELIVERY_BOUNDARY_IN_FLIGHT,
 )
 from .control_plane.agents.workspace_guard import (
     capture_delivery_workspace,
@@ -1001,6 +1005,36 @@ def refresh_state_run(
                 raise ValueError("--agent-lane requires --progress-scope agent_lane")
         if (agent_vision_packet is not None or vision_unchanged_reason) and not normalized_agent_id:
             raise ValueError("vision writeback requires --agent-id")
+        if (
+            normalized_agent_id
+            and (
+                # The two cases the vision checkpoint contract already calls a
+                # material closeout: a material delivery outcome on the lane, or
+                # a durable Next Action update.
+                (
+                    normalized_progress_scope == AGENT_LANE_PROGRESS_SCOPE
+                    and normalized_delivery_outcome in MATERIAL_DELIVERY_OUTCOMES
+                )
+                or bool(next_action)
+            )
+            and normalized_delivery_boundary != DELIVERY_BOUNDARY_IN_FLIGHT
+            and agent_vision_packet is None
+            and not vision_unchanged_reason
+        ):
+            # The vision decision for a material closeout is available in this
+            # turn and nowhere later: the frontier reads it from this run, so
+            # omitting it does not skip the decision, it defers it. The next wake
+            # then opens with a checkpoint-missing replan obligation and spends
+            # itself reconstructing facts that were in hand here.
+            raise ValueError(
+                "a material closeout for an agent must carry its own vision "
+                "decision: pass --agent-vision-json, or a vision patch such as "
+                "--vision-last-patch/--vision-acceptance/--vision-state, or "
+                "--vision-unchanged-reason when this segment did not advance or "
+                "change the agent's vision. Without one, the run is recorded as a "
+                "material segment with a missing checkpoint and the next wake pays "
+                "for it as a replan obligation"
+            )
         agent_vision: dict[str, Any] | None = None
         existing_agent_vision: dict[str, Any] | None = None
         autonomous_replan_frontier_identity: str | None = None
