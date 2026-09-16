@@ -2006,7 +2006,7 @@ export function PersonalWorkspacePage({
               <div className="personal-quick-prompts">
                 <button aria-label={t("composer.nextAction")} disabled={sending} onClick={() => void sendMessage(t("composer.nextActionPrompt"))} title={t("composer.sendMessageHint")} type="button"><MessageCircleQuestion size={13} /><span>{t("composer.nextAction")}</span></button>
                 <button aria-label={t("composer.agentProgress")} disabled={sending} onClick={() => void sendMessage(t("composer.agentProgressPrompt"))} title={t("composer.sendMessageHint")} type="button"><Send size={13} /><span>{t("composer.agentProgress")}</span></button>
-                <button aria-label={t("composer.monitor")} disabled={sending} onClick={() => void sendMessage(t("composer.monitorTemplate"))} title={t("composer.monitorHint")} type="button"><CalendarClock size={13} /><span>{t("composer.monitor")}</span></button>
+                <button aria-label={t("composer.monitor")} onClick={() => prepareScheduleDraft("monitor", selectedGoalId)} title={t("composer.monitorHint")} type="button"><CalendarClock size={13} /><span>{t("composer.monitor")}</span></button>
                 <button aria-label={t("composer.blockers")} disabled={sending || !stewardPromptText("gate")} onClick={() => void sendMessage(stewardPromptText("gate"))} title={t("composer.sendMessageHint")} type="button"><AlertCircle size={13} /><span>{t("composer.blockers")}</span></button>
                 <button aria-label={t("composer.evidence")} disabled={sending || !stewardPromptText("evidence")} onClick={() => void sendMessage(stewardPromptText("evidence"))} title={t("composer.sendMessageHint")} type="button"><FileText size={13} /><span>{t("composer.evidence")}</span></button>
               </div>
