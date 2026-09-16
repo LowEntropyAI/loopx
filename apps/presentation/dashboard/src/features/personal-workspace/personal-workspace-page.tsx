@@ -18,6 +18,7 @@ import {
   listTypedActions,
   previewTypedAction,
   setupGoalChannel,
+  stewardPrompts,
   transitionTypedAction,
   type GoalRepositoryContext,
   type LarkGoalConnection,
@@ -857,6 +858,11 @@ export function PersonalWorkspacePage({
     const existing = drafts[composerDraftKey]?.trimEnd();
     setComposer(existing ? `${existing}\n${text}` : text);
     window.requestAnimationFrame(() => composerRef.current?.focus());
+  }
+  // The steward prompt set is owned by the client model; the quick-prompt row
+  // reuses it so one affordance answers "what now / what blocks / what is proven".
+  function stewardPromptText(id: string) {
+    return stewardPrompts.find((item) => item.id === id)?.prompt ?? "";
   }
   useEffect(() => {
     const el = composerRef.current;
@@ -2006,6 +2012,8 @@ export function PersonalWorkspacePage({
                 <button aria-label={t("composer.nextAction")} className="is-draft" onClick={() => fillQuickPrompt(t("composer.nextActionPrompt"))} title={t("composer.prepareDraft")} type="button"><MessageCircleQuestion size={13} /><span>{t("composer.nextAction")}</span><small className="personal-prompt-subtle">{t("composer.draft")}</small></button>
                 <button className="is-immediate" disabled={sending} onClick={() => void sendMessage(t("composer.agentProgressPrompt"))} title={t("composer.immediate")} type="button"><Send size={13} /><span>{t("composer.agentProgress")}</span><em className="personal-prompt-badge">{t("composer.immediate")}</em></button>
                 <button aria-label={t("composer.monitor")} className="is-draft" onClick={() => prepareScheduleDraft("monitor", selectedGoalId)} title={t("composer.monitorHint")} type="button"><CalendarClock size={13} /><span>{t("composer.monitor")}</span><small className="personal-prompt-subtle">{t("composer.draft")}</small></button>
+                <button className="is-immediate" disabled={sending || !stewardPromptText("gate")} onClick={() => void sendMessage(stewardPromptText("gate"))} title={t("composer.immediate")} type="button"><AlertCircle size={13} /><span>{t("composer.blockers")}</span><em className="personal-prompt-badge">{t("composer.immediate")}</em></button>
+                <button className="is-immediate" disabled={sending || !stewardPromptText("evidence")} onClick={() => void sendMessage(stewardPromptText("evidence"))} title={t("composer.immediate")} type="button"><FileText size={13} /><span>{t("composer.evidence")}</span><em className="personal-prompt-badge">{t("composer.immediate")}</em></button>
               </div>
             ) : (
               <div className="personal-quick-prompts">
