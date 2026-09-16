@@ -119,3 +119,19 @@ must enter through `quota should-run`, advance only the selected Todo, validate
 the result, write state, and spend the matching slot. Scheduler cadence and
 human notification remain host responsibilities; this command does not create
 an independent hidden scheduler.
+
+The selected agent can use `tick` to run one bounded profile cycle. A preview
+shows missing Todos without creating them; `--execute` creates missing Todos,
+verifies their readback, reconciles current Todo evidence, and returns the next
+cycle proposal. The returned plan is not saved automatically: AI or an owner
+must inspect new feedback and adjust work before saving a new cycle with the
+exact revision. This prevents an unattended tick from declaring acceptance or
+overwriting a newer plan.
+
+```sh
+loopx company-control-loop tick \
+  --goal-id company-goal --agent-id company-ceo --project /path/to/project
+loopx company-control-loop tick \
+  --goal-id company-goal --agent-id company-ceo --project /path/to/project \
+  --execute
+```

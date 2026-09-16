@@ -106,6 +106,19 @@ def register_company_control_loop_command(
     next_cycle.add_argument(
         "--goal-id", required=True, help="Goal that owns the reconciled company state."
     )
+    tick = actions.add_parser(
+        "tick",
+        help="Project Todos, collect their evidence, and prepare the next planning cycle.",
+    )
+    add_subcommand_format(tick)
+    tick.add_argument("--goal-id", required=True)
+    tick.add_argument("--agent-id", required=True)
+    tick.add_argument("--project", help="Project containing the Goal active state.")
+    tick.add_argument(
+        "--execute",
+        action="store_true",
+        help="Persist Todo projection and reconciliation; leave the next plan for review.",
+    )
 
 
 def render_company_control_loop_markdown(payload: dict[str, Any]) -> str:
@@ -158,7 +171,7 @@ def handle_company_control_loop_command(
         return None
     try:
         command = args.company_control_loop_command
-        if command in {"show", "sync-todos", "reconcile-todos", "next-cycle"}:
+        if command in {"show", "sync-todos", "reconcile-todos", "next-cycle", "tick"}:
             if runtime_root is None:
                 raise ValueError("company control state requires a runtime root")
             projection = effect_runtime_result(
@@ -187,6 +200,18 @@ def handle_company_control_loop_command(
                 if registry_path is None:
                     raise ValueError("company Todo sync requires a registry")
                 payload = _sync_todos(
+                    stored=projection,
+                    goal_id=args.goal_id,
+                    agent_id=args.agent_id,
+                    project=Path(args.project).expanduser() if args.project else None,
+                    registry_path=registry_path,
+                    runtime_root=runtime_root,
+                    execute=bool(args.execute),
+                )
+            elif command == "tick":
+                if registry_path is None:
+                    raise ValueError("company tick requires a registry")
+                payload = _tick(
                     stored=projection,
                     goal_id=args.goal_id,
                     agent_id=args.agent_id,
@@ -250,6 +275,74 @@ def handle_company_control_loop_command(
         render_company_control_loop_markdown,
     )
     return exit_code
+
+
+def _tick(
+    *,
+    stored: dict[str, Any],
+    goal_id: str,
+    agent_id: str,
+    project: Path | None,
+    registry_path: Path,
+    runtime_root: Path,
+    execute: bool,
+) -> dict[str, Any]:
+    sync = _sync_todos(
+        stored=stored,
+        goal_id=goal_id,
+        agent_id=agent_id,
+        project=project,
+        registry_path=registry_path,
+        runtime_root=runtime_root,
+        execute=execute,
+    )
+    if not execute and any(action["action"] == "would_create" for action in sync["actions"]):
+        return {
+            "ok": True,
+            "dry_run": True,
+            "goal_id": goal_id,
+            "phase": "todo_projection_preview",
+            "sync": sync,
+            "reconciliation": None,
+            "next_cycle": None,
+        }
+    current = effect_runtime_result(
+        "work_item.outcome_routing_state.load",
+        {
+            "schema_version": "outcome_routing_state_store_request_v0",
+            "runtime_root": str(runtime_root),
+            "goal_id": goal_id,
+        },
+    ) if execute else stored
+    reconciliation = _reconcile_todos(
+        stored=current,
+        goal_id=goal_id,
+        agent_id=agent_id,
+        project=project,
+        registry_path=registry_path,
+        runtime_root=runtime_root,
+        execute=execute,
+    )
+    state = reconciliation.get("state")
+    if not isinstance(state, dict):
+        raise RuntimeError("outcome routing reconciliation did not return state")
+    next_cycle = effect_runtime_result(
+        "work_item.outcome_routing_state.next_cycle",
+        {
+            "schema_version": "outcome_routing_next_cycle_request_v0",
+            "goal_id": goal_id,
+            "state": state,
+        },
+    )
+    return {
+        "ok": True,
+        "dry_run": not execute,
+        "goal_id": goal_id,
+        "phase": "next_cycle_ready",
+        "sync": sync,
+        "reconciliation": reconciliation,
+        "next_cycle": next_cycle,
+    }
 
 
 def _sync_todos(

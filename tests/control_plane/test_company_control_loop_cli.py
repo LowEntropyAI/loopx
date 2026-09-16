@@ -456,3 +456,81 @@ def test_outcome_routing_plan_next_cycle_uses_persisted_reconciliation(
     assert payload["goal_converged"] is True
     assert calls[1][0] == "work_item.outcome_routing_state.next_cycle"
     assert calls[1][1]["state"] == state
+
+
+def test_company_tick_previews_missing_todos_without_reconciling(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    methods: list[str] = []
+
+    def runtime(method: str, params: dict[str, object]) -> dict[str, object]:
+        methods.append(method)
+        return _stored_projection(_routed_work("work_activation", "target_activation"))
+
+    monkeypatch.setattr(company_control_loop, "effect_runtime_result", runtime)
+    monkeypatch.setattr(company_control_loop, "list_goal_todos", lambda **kwargs: {"todos": []})
+    assert main([
+        "--format", "json", "--registry", str(tmp_path / "registry.json"),
+        "--runtime-root", str(tmp_path / "runtime"), "company-control-loop",
+        "tick", "--goal-id", "company-goal", "--agent-id", "agent-ceo",
+    ]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["phase"] == "todo_projection_preview"
+    assert payload["sync"]["actions"][0]["action"] == "would_create"
+    assert payload["reconciliation"] is None
+    assert methods == ["work_item.outcome_routing_state.load"]
+
+
+def test_company_tick_reconciles_existing_evidence_and_returns_next_cycle(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    stored = _stored_projection(
+        _routed_work("work_activation", "target_activation"),
+        bindings=[{
+            "work_item_id": "work_activation",
+            "target_key": "target_activation",
+            "todo_id": "todo_activation",
+            "role": "agent",
+        }],
+    )
+    methods: list[str] = []
+
+    def runtime(method: str, params: dict[str, object]) -> dict[str, object]:
+        methods.append(method)
+        if method.endswith(".load"):
+            return stored
+        if method.endswith(".reconcile"):
+            assert params["observations"] == [{
+                "target_key": "target_activation",
+                "todo_id": "todo_activation",
+                "status": "done",
+                "evidence_ref": "artifact:activation-report",
+            }]
+            return {"state": {"revision": "b" * 64, "reconciliation": {"observations": []}}}
+        assert method.endswith(".next_cycle")
+        return {"goal_converged": True, "state": {"cycle": 2}}
+
+    monkeypatch.setattr(company_control_loop, "effect_runtime_result", runtime)
+    monkeypatch.setattr(
+        company_control_loop,
+        "list_goal_todos",
+        lambda **kwargs: {"todos": [{
+            "todo_id": "todo_activation",
+            "target_key": "target_activation",
+            "status": "done",
+            "evidence": "artifact:activation-report",
+        }]},
+    )
+    assert main([
+        "--format", "json", "--registry", str(tmp_path / "registry.json"),
+        "--runtime-root", str(tmp_path / "runtime"), "company-control-loop",
+        "tick", "--goal-id", "company-goal", "--agent-id", "agent-ceo",
+    ]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["phase"] == "next_cycle_ready"
+    assert payload["next_cycle"]["goal_converged"] is True
+    assert methods == [
+        "work_item.outcome_routing_state.load",
+        "work_item.outcome_routing_state.reconcile",
+        "work_item.outcome_routing_state.next_cycle",
+    ]
