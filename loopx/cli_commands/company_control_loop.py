@@ -430,6 +430,7 @@ def _sync_todos(
                 monitor_metadata["target_key"] = target
             if task_class == "continuous_monitor":
                 monitor_metadata["watch_only"] = "true"
+                monitor_metadata["cadence"] = "30m"
             created = add_goal_todo(
                 registry_path=registry_path,
                 runtime_root_arg=str(runtime_root),

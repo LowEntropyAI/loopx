@@ -282,6 +282,7 @@ def test_outcome_routing_plan_sync_todos_creates_and_verifies_readback(
     assert writes[1]["monitor_metadata"] == {
         "target_key": "target_watch",
         "watch_only": "true",
+        "cadence": "30m",
     }
 
 

@@ -128,6 +128,10 @@ must inspect new feedback and adjust work before saving a new cycle with the
 exact revision. This prevents an unattended tick from declaring acceptance or
 overwriting a newer plan.
 
+Observed work is materialized as a watch-only monitor with a 30-minute default
+cadence, so the ordinary heartbeat can schedule it without creating another
+scheduler.
+
 ```sh
 loopx company-control-loop tick \
   --goal-id company-goal --agent-id company-ceo --project /path/to/project
