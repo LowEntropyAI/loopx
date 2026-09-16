@@ -134,8 +134,10 @@ scheduler.
 
 ```sh
 loopx company-control-loop tick \
-  --goal-id company-goal --agent-id company-ceo --project /path/to/project
+  --goal-id company-goal --agent-id company-ceo --project /path/to/project \
+  --task-repository git:github.com/example/company
 loopx company-control-loop tick \
   --goal-id company-goal --agent-id company-ceo --project /path/to/project \
+  --task-repository git:github.com/example/company \
   --execute
 ```

@@ -75,6 +75,10 @@ def register_company_control_loop_command(
     )
     sync.add_argument("--project", help="Project containing the Goal active state.")
     sync.add_argument(
+        "--task-repository",
+        help="Git repository identity assigned to routed agent work.",
+    )
+    sync.add_argument(
         "--execute",
         action="store_true",
         help="Create missing Todos. Without this flag, return the idempotent plan.",
@@ -114,6 +118,10 @@ def register_company_control_loop_command(
     tick.add_argument("--goal-id", required=True)
     tick.add_argument("--agent-id", required=True)
     tick.add_argument("--project", help="Project containing the Goal active state.")
+    tick.add_argument(
+        "--task-repository",
+        help="Git repository identity assigned to routed agent work.",
+    )
     tick.add_argument(
         "--execute",
         action="store_true",
@@ -206,6 +214,7 @@ def handle_company_control_loop_command(
                     project=Path(args.project).expanduser() if args.project else None,
                     registry_path=registry_path,
                     runtime_root=runtime_root,
+                    task_repository=args.task_repository,
                     execute=bool(args.execute),
                 )
             elif command == "tick":
@@ -218,6 +227,7 @@ def handle_company_control_loop_command(
                     project=Path(args.project).expanduser() if args.project else None,
                     registry_path=registry_path,
                     runtime_root=runtime_root,
+                    task_repository=args.task_repository,
                     execute=bool(args.execute),
                 )
             else:
@@ -285,6 +295,7 @@ def _tick(
     project: Path | None,
     registry_path: Path,
     runtime_root: Path,
+    task_repository: str | None,
     execute: bool,
 ) -> dict[str, Any]:
     sync = _sync_todos(
@@ -294,6 +305,7 @@ def _tick(
         project=project,
         registry_path=registry_path,
         runtime_root=runtime_root,
+        task_repository=task_repository,
         execute=execute,
     )
     if not execute and any(action["action"] == "would_create" for action in sync["actions"]):
@@ -353,6 +365,7 @@ def _sync_todos(
     project: Path | None,
     registry_path: Path,
     runtime_root: Path,
+    task_repository: str | None,
     execute: bool,
 ) -> dict[str, Any]:
     state = stored.get("state")
@@ -442,6 +455,7 @@ def _sync_todos(
                 note=f"Acceptance: {todo_projection.get('acceptance')}",
                 task_class=task_class,
                 action_kind=str(todo_projection.get("action_kind") or ""),
+                task_repository=task_repository if role == "agent" else None,
                 claimed_by=agent_id if role == "agent" else None,
                 agent_id=agent_id,
                 blocks_agent=agent_id if task_class == "user_gate" else None,
