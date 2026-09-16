@@ -379,6 +379,69 @@ def test_outcome_routing_plan_reconcile_todos_sends_evidence_to_typed_owner(
     }]
 
 
+def test_outcome_routing_plan_reconcile_todos_recovers_compacted_completion_evidence(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def runtime(method: str, params: dict[str, object]) -> dict[str, object]:
+        calls.append((method, params))
+        if method.endswith(".load"):
+            return _stored_projection(
+                _routed_work("work_activation", "target_activation"),
+                bindings=[{
+                    "work_item_id": "work_activation",
+                    "target_key": "target_activation",
+                    "todo_id": "todo_activation",
+                    "role": "agent",
+                }],
+            )
+        return {
+            "schema_version": "outcome_routing_state_store_result_v0",
+            "operation": "reconcile",
+            "dry_run": True,
+            "written": False,
+        }
+
+    monkeypatch.setattr(company_control_loop, "effect_runtime_result", runtime)
+
+    def list_todos(**kwargs: object) -> dict[str, object]:
+        if kwargs.get("todo_id") == "todo_activation":
+            assert kwargs.get("limit") is None
+            return {"todos": [{
+                "todo_id": "todo_activation",
+                "status": "done",
+                "evidence": "artifact:activation-report",
+            }]}
+        assert kwargs.get("limit") == 500
+        return {"todos": [{
+            "todo_id": "todo_activation",
+            "target_key": "target_activation",
+            "status": "done",
+        }]}
+
+    monkeypatch.setattr(company_control_loop, "list_goal_todos", list_todos)
+
+    assert main([
+        "--format", "json", "--registry", str(tmp_path / "registry.json"),
+        "--runtime-root", str(tmp_path / "runtime"),
+        "company-control-loop", "reconcile-todos", "--goal-id", "company-goal",
+        "--agent-id", "agent-ceo", "--project", str(tmp_path),
+    ]) == 0
+    json.loads(capsys.readouterr().out)
+    observations = next(
+        params["observations"]
+        for method, params in calls
+        if method.endswith(".reconcile")
+    )
+    assert observations == [{
+        "target_key": "target_activation",
+        "todo_id": "todo_activation",
+        "status": "done",
+        "evidence_ref": "artifact:activation-report",
+    }]
+
+
 def test_outcome_routing_plan_reconcile_todos_uses_persisted_todo_identity(
     tmp_path, monkeypatch, capsys
 ) -> None:

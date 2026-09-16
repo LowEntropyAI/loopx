@@ -580,6 +580,24 @@ def _reconcile_todos(
             "status": raw.get("status"),
         }
         evidence = raw.get("evidence")
+        if raw.get("status") == "done" and not (
+            isinstance(evidence, str) and evidence.strip()
+        ):
+            todo_id = str(raw.get("todo_id") or "").strip()
+            detail = list_goal_todos(
+                registry_path=registry_path,
+                runtime_root_arg=str(runtime_root),
+                goal_id=goal_id,
+                todo_id=todo_id,
+                agent_id=agent_id,
+                project=project,
+            )
+            matched = [
+                item for item in detail.get("todos", [])
+                if isinstance(item, dict) and item.get("todo_id") == todo_id
+            ]
+            if len(matched) == 1:
+                evidence = matched[0].get("evidence")
         if isinstance(evidence, str) and evidence.strip():
             observation["evidence_ref"] = evidence.strip()
         observations.append(observation)
