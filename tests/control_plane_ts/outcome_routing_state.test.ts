@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   bindOutcomeRoutingTodos,
+  ingestOutcomeRoutingInbox,
   OUTCOME_ROUTING_STATE_RECONCILE_REQUEST_SCHEMA,
   OUTCOME_ROUTING_STATE_STORE_REQUEST_SCHEMA,
   outcomeRoutingStatePath,
@@ -164,6 +165,63 @@ test("sourced human feedback survives restart and enters the next cycle without 
   assert.equal((next.state as Record<string, any>).feedback[0].feedback_id, feedback.feedback_id);
   assert.equal((next.state as Record<string, any>).work_items.length, 1);
   assert.equal((reconciled.state as Record<string, any>).reconciliation.observations[0].next_status, "ready");
+});
+
+test("feedback inbox ingests atomically and uses feedback IDs as a restart-safe cursor", async (t) => {
+  const runtimeRoot = await mkdtemp(join(tmpdir(), "loopx-feedback-inbox-"));
+  t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
+  const first = await writeOutcomeRoutingState(request(runtimeRoot, {
+    state: stateWithWork(), updated_at: "2026-09-17T00:00:00Z",
+  }));
+  const revision = (first.state as Record<string, any>).revision;
+  const feedback = (id: string) => ({
+    feedback_id: id, source: "employee:success", subject: `Interview ${id}`,
+    kind: "execution_result", observed_at: "2026-09-17T00:01:00Z",
+    evidence_ref: `interview:${id}`, affected_outcome_ids: ["outcome_activation"],
+  });
+  const base = {
+    schema_version: "outcome_routing_state_inbox_request_v0",
+    runtime_root: runtimeRoot, goal_id: "company-goal", expected_revision: revision,
+    updated_at: "2026-09-17T00:02:00Z", execute: true,
+    feedback_items: [feedback("feedback_alice_001"), feedback("feedback_alice_002")],
+  };
+  await assert.rejects(ingestOutcomeRoutingInbox({
+    ...base, feedback_items: [feedback("feedback_alice_001"), { ...feedback("feedback_alice_002"), evidence_ref: "" }],
+  }), /evidence_ref/);
+  assert.equal((await loadOutcomeRoutingState(request(runtimeRoot))).state &&
+    ((await loadOutcomeRoutingState(request(runtimeRoot))).state as Record<string, any>).revision, revision);
+  const written = await ingestOutcomeRoutingInbox(base);
+  assert.equal(written.written, true);
+  assert.deepEqual(written.ingested_feedback_ids, ["feedback_alice_001", "feedback_alice_002"]);
+  const restarted = (await loadOutcomeRoutingState(request(runtimeRoot))).state as Record<string, any>;
+  assert.equal(restarted.projection.feedback.length, 2);
+  const replay = await ingestOutcomeRoutingInbox({ ...base, expected_revision: restarted.revision });
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(replay.replayed_feedback_ids, ["feedback_alice_001", "feedback_alice_002"]);
+  const idle = await ingestOutcomeRoutingInbox({
+    ...base, expected_revision: restarted.revision, feedback_items: [],
+  });
+  assert.equal(idle.written, false);
+  assert.equal(idle.replayed, true);
+  await assert.rejects(ingestOutcomeRoutingInbox({
+    ...base, expected_revision: restarted.revision,
+    feedback_items: [{ ...feedback("feedback_alice_001"), subject: "altered" }],
+  }), /different content/);
+  assert.equal(((await loadOutcomeRoutingState(request(runtimeRoot))).state as Record<string, any>).revision,
+    restarted.revision);
+  await reconcileOutcomeRoutingState({
+    schema_version: OUTCOME_ROUTING_STATE_RECONCILE_REQUEST_SCHEMA,
+    runtime_root: runtimeRoot, goal_id: "company-goal", expected_revision: restarted.revision,
+    updated_at: "2026-09-17T00:03:00Z", execute: true,
+    observations: [{ target_key: "activation_delivery", todo_id: "todo_activation", status: "open" }],
+  });
+  const next = planOutcomeRoutingNextCycle({
+    schema_version: "outcome_routing_next_cycle_request_v0",
+    goal_id: "company-goal", state: (await loadOutcomeRoutingState(request(runtimeRoot))).state,
+  });
+  assert.deepEqual((next.state as Record<string, any>).feedback.map((item: any) => item.feedback_id),
+    ["feedback_alice_001", "feedback_alice_002"]);
+  assert.equal((next.state as Record<string, any>).work_items.length, 1);
 });
 
 test("Todo bindings are revisioned profile state with exact work identity", async (t) => {

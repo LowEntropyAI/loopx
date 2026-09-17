@@ -34,6 +34,8 @@ export const OUTCOME_ROUTING_STATE_BIND_REQUEST_SCHEMA =
   "outcome_routing_state_bind_request_v0";
 export const OUTCOME_ROUTING_STATE_FEEDBACK_REQUEST_SCHEMA =
   "outcome_routing_state_feedback_request_v0";
+export const OUTCOME_ROUTING_STATE_INBOX_REQUEST_SCHEMA =
+  "outcome_routing_state_inbox_request_v0";
 export const OUTCOME_ROUTING_NEXT_CYCLE_REQUEST_SCHEMA =
   "outcome_routing_next_cycle_request_v0";
 export const OUTCOME_ROUTING_NEXT_CYCLE_SCHEMA =
@@ -354,6 +356,91 @@ export async function recordOutcomeRoutingFeedback(value: unknown): Promise<Json
     const readback = await readStoredState(path, goalId);
     if (!readback || readback.revision !== nextState.revision) throw new Error("outcome routing feedback readback failed");
     return { schema_version: OUTCOME_ROUTING_STATE_STORE_RESULT_SCHEMA, operation: "record_feedback", goal_id: goalId, path, dry_run: false, state: readback, written: true, replayed: false };
+  });
+}
+
+export async function ingestOutcomeRoutingInbox(value: unknown): Promise<JsonObject> {
+  const request = requireJsonObject(value, "outcome_routing_state_inbox params");
+  if (request.schema_version !== OUTCOME_ROUTING_STATE_INBOX_REQUEST_SCHEMA) {
+    throw new EffectRuntimeRequestError("outcome routing inbox request schema mismatch");
+  }
+  const runtimeRoot = requireNonEmptyString(request.runtime_root, "runtime_root");
+  const goalId = requireNonEmptyString(request.goal_id, "goal_id");
+  const expectedRevision = requireNonEmptyString(request.expected_revision, "expected_revision");
+  const updatedAt = requireNonEmptyString(request.updated_at, "updated_at");
+  const execute = requireBoolean(request.execute, "execute");
+  if (!Array.isArray(request.feedback_items) || request.feedback_items.length > 256) {
+    throw new EffectRuntimeRequestError("feedback_items must be an array of at most 256 items");
+  }
+  const feedbackItems = request.feedback_items as unknown[];
+  const path = outcomeRoutingStatePath(runtimeRoot, goalId);
+  return await withFileMutationLock(path, async () => {
+    const existing = await readStoredState(path, goalId);
+    if (!existing) throw new EffectRuntimeRequestError("persisted outcome routing state does not exist");
+    if (existing.revision !== expectedRevision) {
+      throw new EffectRuntimeConflictError("outcome routing state revision changed");
+    }
+    const projection = requireJsonObject(existing.projection, "stored projection");
+    const priorFeedback = Array.isArray(projection.feedback) ? projection.feedback : [];
+    const incoming = feedbackItems.map((item, index) =>
+      requireJsonObject(item, `feedback_items[${index}]`)
+    );
+    // Validate every file before writing any of them. The projected feedback IDs
+    // are the durable per-source cursor, so a restarted importer can rescan safely.
+    const normalized = projectOutcomeRoutingPlan({
+      schema_version: "outcome_routing_plan_request_v0",
+      direction: projection.direction,
+      cycle: projection.cycle,
+      outcomes: projection.outcomes,
+      work_items: projection.work_items,
+      feedback: incoming,
+    }).feedback as JsonObject[];
+    const priorById = new Map(priorFeedback.map((item) => {
+      const feedback = requireJsonObject(item, "stored feedback");
+      return [requireNonEmptyString(feedback.feedback_id, "stored feedback_id"), feedback];
+    }));
+    const fresh: JsonObject[] = [];
+    const replayedIds: string[] = [];
+    for (const feedback of normalized) {
+      const feedbackId = String(feedback.feedback_id);
+      const prior = priorById.get(feedbackId);
+      if (!prior) {
+        const { disposition: _disposition, ...requestFeedback } = feedback;
+        fresh.push(requestFeedback);
+        continue;
+      }
+      if (JSON.stringify(stableValue(prior)) !== JSON.stringify(stableValue(feedback))) {
+        throw new EffectRuntimeConflictError("feedback_id already exists with different content");
+      }
+      replayedIds.push(feedbackId);
+    }
+    const result = { schema_version: OUTCOME_ROUTING_STATE_STORE_RESULT_SCHEMA,
+      operation: "ingest_inbox", goal_id: goalId, path,
+      ingested_feedback_ids: fresh.map((item) => String(item.feedback_id)),
+      replayed_feedback_ids: replayedIds };
+    if (fresh.length === 0) {
+      return { ...result, dry_run: !execute, state: existing, written: false, replayed: true };
+    }
+    const nextProjection = projectOutcomeRoutingPlan({
+      schema_version: "outcome_routing_plan_request_v0",
+      direction: projection.direction,
+      cycle: projection.cycle,
+      outcomes: projection.outcomes,
+      work_items: projection.work_items,
+      feedback: [...priorFeedback, ...fresh],
+    });
+    const revisionContent: JsonObject = { projection: nextProjection };
+    if (Array.isArray(existing.todo_bindings) && existing.todo_bindings.length > 0) {
+      revisionContent.todo_bindings = existing.todo_bindings;
+    }
+    if (existing.reconciliation !== undefined) revisionContent.reconciliation = existing.reconciliation;
+    const nextState: JsonObject = { ...existing, projection: nextProjection,
+      revision: revision(revisionContent), updated_at: updatedAt };
+    if (!execute) return { ...result, dry_run: true, state: nextState, written: false, replayed: false };
+    await atomicWriteJson(path, nextState);
+    const readback = await readStoredState(path, goalId);
+    if (!readback || readback.revision !== nextState.revision) throw new Error("outcome routing inbox readback failed");
+    return { ...result, dry_run: false, state: readback, written: true, replayed: false };
   });
 }
 

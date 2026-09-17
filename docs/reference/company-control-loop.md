@@ -112,6 +112,27 @@ readback; replaying the same feedback ID and content is idempotent, while
 changing content under an existing ID is rejected. Feedback survives restart
 and appears in `next-cycle`, where non-comment feedback requests replanning.
 
+For an employee or an authorized integration that can write files, configure
+an explicit inbox directory with one feedback object per `.json` file. Write
+each file completely before giving it the `.json` suffix. Trigger
+`ingest-inbox` when a file arrives; it also works as a bounded one-shot scan
+after restart:
+
+```sh
+loopx company-control-loop ingest-inbox \
+  --goal-id company-goal --inbox-dir /path/to/feedback-inbox
+loopx company-control-loop ingest-inbox \
+  --goal-id company-goal --inbox-dir /path/to/feedback-inbox --execute
+```
+
+The entire batch is validated before a single revisioned write. Feedback IDs
+in company state act as the durable source cursor: rescanning the same inbox
+after a crash replays existing items and ingests only new IDs. Conflicting
+content under an existing ID is rejected. An empty or unchanged inbox does
+not write state or claim progress. The caller owns file arrival detection and
+source authentication; a claimed `source` or `evidence_ref` is not independent
+verification of the employee's result.
+
 ## Reconcile and plan the next cycle
 
 Reconciliation is also dry-run by default:

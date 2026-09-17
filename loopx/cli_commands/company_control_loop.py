@@ -69,6 +69,15 @@ def register_company_control_loop_command(
     feedback.add_argument("--feedback-json", required=True, help="Path to one feedback object.")
     feedback.add_argument("--expected-revision", required=True)
     feedback.add_argument("--execute", action="store_true")
+    inbox = actions.add_parser(
+        "ingest-inbox",
+        help="Ingest explicit feedback JSON files atomically with restart-safe replay.",
+    )
+    add_subcommand_format(inbox)
+    inbox.add_argument("--goal-id", required=True)
+    inbox.add_argument("--inbox-dir", required=True, help="Directory containing one feedback object per .json file.")
+    inbox.add_argument("--expected-revision", help="Optional exact state revision for compare-and-set.")
+    inbox.add_argument("--execute", action="store_true")
     sync = actions.add_parser(
         "sync-todos",
         help="Create missing LoopX Todos from persisted company work and verify readback.",
@@ -176,6 +185,19 @@ def _read_json_object(path_text: str) -> dict[str, Any]:
     return payload
 
 
+def _read_feedback_inbox(path_text: str) -> list[dict[str, Any]]:
+    inbox = Path(path_text).expanduser()
+    if not inbox.is_dir() or inbox.is_symlink():
+        raise ValueError("feedback inbox must be a real directory")
+    entries = sorted(path for path in inbox.iterdir() if path.suffix == ".json")
+    if len(entries) > 256:
+        raise ValueError("feedback inbox must contain at most 256 JSON files")
+    for path in entries:
+        if not path.is_file() or path.is_symlink():
+            raise ValueError("feedback inbox JSON entries must be regular files")
+    return [_read_json_object(str(path)) for path in entries]
+
+
 def handle_company_control_loop_command(
     args: argparse.Namespace,
     *,
@@ -188,7 +210,7 @@ def handle_company_control_loop_command(
         return None
     try:
         command = args.company_control_loop_command
-        if command in {"show", "record-feedback", "sync-todos", "reconcile-todos", "next-cycle", "tick"}:
+        if command in {"show", "record-feedback", "ingest-inbox", "sync-todos", "reconcile-todos", "next-cycle", "tick"}:
             if runtime_root is None:
                 raise ValueError("company control state requires a runtime root")
             projection = effect_runtime_result(
@@ -213,6 +235,28 @@ def handle_company_control_loop_command(
                             "expected_revision": args.expected_revision,
                             "updated_at": datetime.now(UTC).isoformat(),
                             "feedback": _read_json_object(args.feedback_json),
+                            "execute": bool(args.execute),
+                        },
+                    ),
+                }
+            elif command == "ingest-inbox":
+                state = projection.get("state")
+                if not isinstance(state, dict):
+                    raise ValueError("persisted company control state does not exist")
+                revision = state.get("revision")
+                if args.expected_revision and args.expected_revision != revision:
+                    raise ValueError("outcome routing state revision changed")
+                payload = {
+                    "ok": True,
+                    **effect_runtime_result(
+                        "work_item.outcome_routing_state.ingest_inbox",
+                        {
+                            "schema_version": "outcome_routing_state_inbox_request_v0",
+                            "runtime_root": str(runtime_root),
+                            "goal_id": args.goal_id,
+                            "expected_revision": revision,
+                            "updated_at": datetime.now(UTC).isoformat(),
+                            "feedback_items": _read_feedback_inbox(args.inbox_dir),
                             "execute": bool(args.execute),
                         },
                     ),

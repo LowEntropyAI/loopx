@@ -2,8 +2,24 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from loopx.cli import main
 from loopx.cli_commands import company_control_loop
+
+
+def test_feedback_inbox_reads_stable_json_order_and_rejects_symlinks(tmp_path) -> None:
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    (inbox / "b.json").write_text('{"feedback_id":"feedback_b"}', encoding="utf-8")
+    (inbox / "a.json").write_text('{"feedback_id":"feedback_a"}', encoding="utf-8")
+    (inbox / "incomplete.tmp").write_text("{}", encoding="utf-8")
+    assert [item["feedback_id"] for item in company_control_loop._read_feedback_inbox(str(inbox))] == [
+        "feedback_a", "feedback_b"
+    ]
+    (inbox / "linked.json").symlink_to(inbox / "a.json")
+    with pytest.raises(ValueError, match="regular files"):
+        company_control_loop._read_feedback_inbox(str(inbox))
 
 
 def _request() -> dict[str, object]:

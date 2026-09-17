@@ -788,7 +788,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             if args.command == "company-control-loop"
             and args.company_control_loop_command
-            in {"save", "show", "record-feedback", "sync-todos", "reconcile-todos", "next-cycle", "tick"}
+            in {"save", "show", "record-feedback", "ingest-inbox", "sync-todos", "reconcile-todos", "next-cycle", "tick"}
             else None
         ),
         registry_path=registry_path,

@@ -177,6 +177,7 @@ import {
 } from "./work_items/outcome_routing_plan.ts";
 import {
   bindOutcomeRoutingTodos,
+  ingestOutcomeRoutingInbox,
   loadOutcomeRoutingState,
   planOutcomeRoutingNextCycle,
   recordOutcomeRoutingFeedback,
@@ -464,6 +465,7 @@ export function createEffectRuntimeHandlers(
     ["work_item.refresh_recommendation.resolve", resolveRefreshRecommendation],
     ["work_item.outcome_routing_plan.project", projectOutcomeRoutingPlan],
     ["work_item.outcome_routing_state.bind", bindOutcomeRoutingTodos],
+    ["work_item.outcome_routing_state.ingest_inbox", ingestOutcomeRoutingInbox],
     ["work_item.outcome_routing_state.load", loadOutcomeRoutingState],
     ["work_item.outcome_routing_state.next_cycle", planOutcomeRoutingNextCycle],
     ["work_item.outcome_routing_state.record_feedback", recordOutcomeRoutingFeedback],
