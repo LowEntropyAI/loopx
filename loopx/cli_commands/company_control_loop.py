@@ -136,6 +136,7 @@ def register_company_control_loop_command(
     tick.add_argument("--goal-id", required=True)
     tick.add_argument("--agent-id", required=True)
     tick.add_argument("--project", help="Project containing the Goal active state.")
+    tick.add_argument("--inbox-dir", help="Explicit feedback inbox to ingest before reconciliation.")
     tick.add_argument(
         "--task-repository",
         help="Git repository identity assigned to routed agent work.",
@@ -297,6 +298,7 @@ def handle_company_control_loop_command(
                     registry_path=registry_path,
                     runtime_root=runtime_root,
                     task_repository=args.task_repository,
+                    inbox_dir=args.inbox_dir,
                     execute=bool(args.execute),
                 )
             else:
@@ -365,8 +367,39 @@ def _tick(
     registry_path: Path,
     runtime_root: Path,
     task_repository: str | None,
+    inbox_dir: str | None,
     execute: bool,
 ) -> dict[str, Any]:
+    inbox_result: dict[str, Any] | None = None
+    if inbox_dir:
+        state = stored.get("state")
+        if not isinstance(state, dict):
+            raise ValueError("persisted company control state does not exist")
+        inbox_result = effect_runtime_result(
+            "work_item.outcome_routing_state.ingest_inbox",
+            {
+                "schema_version": "outcome_routing_state_inbox_request_v0",
+                "runtime_root": str(runtime_root),
+                "goal_id": goal_id,
+                "expected_revision": state.get("revision"),
+                "updated_at": datetime.now(UTC).isoformat(),
+                "feedback_items": _read_feedback_inbox(inbox_dir),
+                "execute": execute,
+            },
+        )
+        if not execute and inbox_result.get("ingested_feedback_ids"):
+            return {
+                "ok": True,
+                "dry_run": True,
+                "goal_id": goal_id,
+                "phase": "feedback_inbox_preview",
+                "inbox": inbox_result,
+                "sync": None,
+                "reconciliation": None,
+                "next_cycle": None,
+            }
+        if execute:
+            stored = {"state": inbox_result.get("state")}
     sync = _sync_todos(
         stored=stored,
         goal_id=goal_id,
@@ -384,6 +417,7 @@ def _tick(
             "goal_id": goal_id,
             "phase": "todo_projection_preview",
             "sync": sync,
+            "inbox": inbox_result,
             "reconciliation": None,
             "next_cycle": None,
         }
@@ -421,6 +455,7 @@ def _tick(
         "goal_id": goal_id,
         "phase": "next_cycle_ready",
         "sync": sync,
+        "inbox": inbox_result,
         "reconciliation": reconciliation,
         "next_cycle": next_cycle,
     }

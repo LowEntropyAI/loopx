@@ -186,5 +186,10 @@ loopx company-control-loop tick \
 loopx company-control-loop tick \
   --goal-id company-goal --agent-id company-ceo --project /path/to/project \
   --task-repository git:github.com/example/company \
+  --inbox-dir /path/to/feedback-inbox \
   --execute
 ```
+
+With `--inbox-dir`, `tick` first ingests new feedback, then reconciles Todos
+against the resulting revision and includes that feedback in its next-cycle
+proposal. The inbox is opt-in; an absent directory is never scanned implicitly.
