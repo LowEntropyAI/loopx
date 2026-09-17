@@ -158,6 +158,9 @@ set `replan_required`. When no work remains, `goal_converged` is true.
 
 Review the returned state before saving it as the next cycle. Revision checks
 prevent an older planner or restarted worker from overwriting newer state.
+Saving a changed cycle retains Todo bindings only when work ID, target key, and
+role still match; a changed target gets a new Todo on the next sync. This keeps
+an unchanged owner decision gate attached across replans.
 
 ## Always-on operation
 

@@ -208,10 +208,9 @@ export async function writeOutcomeRoutingState(value: unknown): Promise<JsonObje
     "expected_revision",
   );
   const projection = projectOutcomeRoutingPlan(request.state);
-  const nextRevision = revision({ projection });
   return await withFileMutationLock(path, async () => {
     const existing = await readStoredState(path, goalId);
-    if (existing?.revision === nextRevision) {
+    if (existing && JSON.stringify(stableValue(existing.projection)) === JSON.stringify(stableValue(projection))) {
       return {
         schema_version: OUTCOME_ROUTING_STATE_STORE_RESULT_SCHEMA,
         operation: "write",
@@ -230,12 +229,26 @@ export async function writeOutcomeRoutingState(value: unknown): Promise<JsonObje
     if (expectedRevision !== (existing?.revision ?? null)) {
       throw new EffectRuntimeConflictError("outcome routing state revision changed");
     }
+    const compatible = new Map((projection.work_items as JsonObject[]).map((item) => [
+      String(item.work_item_id),
+      { target_key: item.target_key, role: (item.todo_projection as JsonObject).role },
+    ]));
+    const retainedBindings = Array.isArray(existing?.todo_bindings)
+      ? existing.todo_bindings.filter((value) => {
+        const binding = requireJsonObject(value, "stored Todo binding");
+        const next = compatible.get(String(binding.work_item_id));
+        return next?.target_key === binding.target_key && next?.role === binding.role;
+      })
+      : [];
+    const revisionContent: JsonObject = { projection };
+    if (retainedBindings.length > 0) revisionContent.todo_bindings = retainedBindings;
+    const nextRevision = revision(revisionContent);
     const stored: JsonObject = {
       schema_version: OUTCOME_ROUTING_STATE_STORE_SCHEMA,
       goal_id: goalId,
       revision: nextRevision,
       updated_at: requireNonEmptyString(request.updated_at, "updated_at"),
-      projection,
+      ...revisionContent,
     };
     await atomicWriteJson(path, stored);
     const readback = await readStoredState(path, goalId);

@@ -273,6 +273,42 @@ test("Todo bindings are revisioned profile state with exact work identity", asyn
   );
 });
 
+test("saving a new cycle retains unchanged human Todo binding and drops changed targets", async (t) => {
+  const runtimeRoot = await mkdtemp(join(tmpdir(), "loopx-outcome-cycle-bind-"));
+  t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
+  const initial = stateWithWork();
+  initial.work_items.push({
+    work_item_id: "work_decision", outcome_id: "outcome_activation",
+    title: "Choose activation metric", acceptance: "Owner chooses metric",
+    authority_tier: "B", ai_capable: false, material_decision: true,
+    target_key: "activation_decision",
+  });
+  const first = await writeOutcomeRoutingState(request(runtimeRoot, {
+    state: initial, updated_at: "2026-09-17T00:00:00Z",
+  }));
+  const bound = await bindOutcomeRoutingTodos({
+    schema_version: "outcome_routing_state_bind_request_v0",
+    runtime_root: runtimeRoot, goal_id: "company-goal",
+    expected_revision: (first.state as Record<string, any>).revision,
+    updated_at: "2026-09-17T00:01:00Z",
+    todo_bindings: [
+      { work_item_id: "work_activation", target_key: "activation_delivery", todo_id: "todo_activation", role: "agent" },
+      { work_item_id: "work_decision", target_key: "activation_decision", todo_id: "todo_decision", role: "user" },
+    ],
+  });
+  const next = { ...initial, cycle: 2, work_items: initial.work_items.map((item) =>
+    item.work_item_id === "work_activation" ? { ...item, target_key: "new_activation_delivery" } : item
+  ) };
+  const saved = await writeOutcomeRoutingState(request(runtimeRoot, {
+    state: next, expected_revision: (bound.state as Record<string, any>).revision,
+    updated_at: "2026-09-17T00:02:00Z",
+  }));
+  assert.deepEqual((saved.state as Record<string, any>).todo_bindings, [
+    { work_item_id: "work_decision", target_key: "activation_decision", todo_id: "todo_decision", role: "user" },
+  ]);
+  assert.deepEqual((await loadOutcomeRoutingState(request(runtimeRoot))).state, saved.state);
+});
+
 test("outcome routing state path is bounded and rejects relative runtime roots", () => {
   const left = outcomeRoutingStatePath("/runtime", "company goal");
   const right = outcomeRoutingStatePath("/runtime", "company-goal");
