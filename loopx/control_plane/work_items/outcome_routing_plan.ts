@@ -40,6 +40,7 @@ interface OutcomeWorkItem extends JsonObject {
   prohibited: boolean;
   material_decision: boolean;
   human_identity_required: boolean;
+  owner?: string;
   wait_for?: string;
   target_key: string;
 }
@@ -98,6 +99,7 @@ function requireUniqueIds(
 function outcomeWorkItem(value: unknown, label: string): OutcomeWorkItem {
   const raw = requireJsonObject(value, label);
   const waitFor = optionalNonEmptyString(raw.wait_for, `${label}.wait_for`);
+  const owner = optionalNonEmptyString(raw.owner, `${label}.owner`);
   return {
     work_item_id: publicId(raw.work_item_id, `${label}.work_item_id`),
     outcome_id: publicId(raw.outcome_id, `${label}.outcome_id`),
@@ -122,6 +124,7 @@ function outcomeWorkItem(value: unknown, label: string): OutcomeWorkItem {
         `${label}.human_identity_required`,
       ),
     ...(waitFor === null ? {} : { wait_for: waitFor }),
+    ...(owner === null ? {} : { owner }),
     target_key: publicId(raw.target_key, `${label}.target_key`),
   };
 }
@@ -191,12 +194,16 @@ function todoProjection(item: OutcomeWorkItem, route: OutcomeWorkRoute): JsonObj
     target_key: item.target_key,
     text: item.title,
     acceptance: item.acceptance,
+    ...(item.owner ? { owner: item.owner } : {}),
   };
 }
 
 function projectWorkItem(value: unknown, label: string): RoutedOutcomeWorkItem {
   const item = outcomeWorkItem(value, label);
   const decision = routeOutcomeWorkItem(item);
+  if (decision.route === "human_execute" && !item.owner) {
+    throw new EffectRuntimeRequestError(`${label}.owner is required for human execution`);
+  }
   return {
     ...item,
     route: decision.route,

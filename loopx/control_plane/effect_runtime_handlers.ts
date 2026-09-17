@@ -179,6 +179,7 @@ import {
   bindOutcomeRoutingTodos,
   loadOutcomeRoutingState,
   planOutcomeRoutingNextCycle,
+  recordOutcomeRoutingFeedback,
   reconcileOutcomeRoutingState,
   writeOutcomeRoutingState,
 } from "./work_items/outcome_routing_state.ts";
@@ -465,6 +466,7 @@ export function createEffectRuntimeHandlers(
     ["work_item.outcome_routing_state.bind", bindOutcomeRoutingTodos],
     ["work_item.outcome_routing_state.load", loadOutcomeRoutingState],
     ["work_item.outcome_routing_state.next_cycle", planOutcomeRoutingNextCycle],
+    ["work_item.outcome_routing_state.record_feedback", recordOutcomeRoutingFeedback],
     ["work_item.outcome_routing_state.reconcile", reconcileOutcomeRoutingState],
     ["work_item.outcome_routing_state.write", writeOutcomeRoutingState],
     ["work_item.delivery_history.project", projectDeliveryHistory],

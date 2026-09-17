@@ -31,6 +31,9 @@ only these decisions:
 A Todo marked done is accepted only when reconciliation also receives an
 evidence reference. Completion without evidence becomes `awaiting_evidence`;
 a blocked Todo becomes `replanning`.
+Human execution work must name an `owner` in the work item and state its
+`acceptance` criteria. The dispatched user action carries both. The employee's
+activity alone does not complete the work; the Todo result still needs evidence.
 
 ## State lifecycle
 
@@ -85,6 +88,29 @@ Todo readback. Agent Todos may still use the kernel's existing `target_key`
 identity. Human Todos remain ordinary `user_gate` and `user_action` records;
 their correlation identity stays inside profile state. Failed readback or a
 stale state revision stops the command.
+
+## Record human results and feedback
+
+Record a decision, execution result, risk, metric change, fact, or comment as
+one feedback JSON object. It needs a stable `feedback_id`, `source`, `subject`,
+`kind`, `observed_at`, `evidence_ref`, and `affected_outcome_ids`. The source
+should identify the person or system that supplied the information; the
+evidence reference should point to the underlying record. This records a claim
+and its provenance; it does not itself mark a Todo complete.
+
+```sh
+loopx company-control-loop record-feedback \
+  --goal-id company-goal --feedback-json employee-result.json \
+  --expected-revision REVISION
+loopx company-control-loop record-feedback \
+  --goal-id company-goal --feedback-json employee-result.json \
+  --expected-revision REVISION --execute
+```
+
+The first call previews the revisioned update. Executing persists it with
+readback; replaying the same feedback ID and content is idempotent, while
+changing content under an existing ID is rejected. Feedback survives restart
+and appears in `next-cycle`, where non-comment feedback requests replanning.
 
 ## Reconcile and plan the next cycle
 

@@ -60,7 +60,7 @@ test("routing precedence preserves authority, waiting, and human boundaries", ()
       work({ work_item_id: "work_rejected", target_key: "target_rejected", prohibited: true }),
       work({ work_item_id: "work_observe", target_key: "target_observe", wait_for: "provider result" }),
       work({ work_item_id: "work_decide", target_key: "target_decide", material_decision: true }),
-      work({ work_item_id: "work_execute", target_key: "target_execute", human_identity_required: true }),
+      work({ work_item_id: "work_execute", target_key: "target_execute", human_identity_required: true, owner: "employee:alice" }),
       work({ work_item_id: "work_incomplete", target_key: "target_incomplete", ai_capable: false }),
     ],
   }));
@@ -75,6 +75,10 @@ test("routing precedence preserves authority, waiting, and human boundaries", ()
     ),
     ["blocker", "continuous_monitor", "user_gate", "user_action", "user_gate"],
   );
+  assert.equal(((result.work_items as Record<string, any>[])[3].todo_projection).owner, "employee:alice");
+  assert.throws(() => projectOutcomeRoutingPlan(request({
+    work_items: [work({ human_identity_required: true })],
+  })), /owner is required for human execution/);
 });
 
 test("material feedback creates an explicit replan signal", () => {

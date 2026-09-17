@@ -11,6 +11,7 @@ import {
   outcomeRoutingStatePath,
   loadOutcomeRoutingState,
   planOutcomeRoutingNextCycle,
+  recordOutcomeRoutingFeedback,
   reconcileOutcomeRoutingState,
   writeOutcomeRoutingState,
 } from "../../loopx/control_plane/work_items/outcome_routing_state.ts";
@@ -115,6 +116,54 @@ test("outcome routing state requires revision matching for updates", async (t) =
     (updated.state as Record<string, unknown>).revision,
     stored.revision,
   );
+});
+
+test("sourced human feedback survives restart and enters the next cycle without completing work", async (t) => {
+  const runtimeRoot = await mkdtemp(join(tmpdir(), "loopx-human-feedback-"));
+  t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
+  const initial = await writeOutcomeRoutingState(request(runtimeRoot, {
+    state: stateWithWork(), updated_at: "2026-09-17T00:00:00Z",
+  }));
+  const feedback = {
+    feedback_id: "feedback_employee_001",
+    source: "employee:alice",
+    subject: "Customer interview found onboarding friction",
+    kind: "execution_result",
+    observed_at: "2026-09-17T00:01:00Z",
+    evidence_ref: "interview:2026-09-17-01",
+    affected_outcome_ids: ["outcome_activation"],
+  };
+  const base = {
+    schema_version: "outcome_routing_state_feedback_request_v0",
+    runtime_root: runtimeRoot, goal_id: "company-goal",
+    expected_revision: (initial.state as Record<string, any>).revision,
+    updated_at: "2026-09-17T00:02:00Z", feedback,
+  };
+  await assert.rejects(recordOutcomeRoutingFeedback({ ...base, execute: false, feedback: { ...feedback, evidence_ref: "" } }), /evidence_ref/);
+  const preview = await recordOutcomeRoutingFeedback({ ...base, execute: false });
+  assert.equal(preview.written, false);
+  assert.deepEqual((await loadOutcomeRoutingState(request(runtimeRoot))).state, initial.state);
+  const recorded = await recordOutcomeRoutingFeedback({ ...base, execute: true });
+  const restarted = (await loadOutcomeRoutingState(request(runtimeRoot))).state as Record<string, any>;
+  assert.equal(restarted.revision, (recorded.state as Record<string, any>).revision);
+  assert.equal(restarted.projection.feedback[0].evidence_ref, feedback.evidence_ref);
+  const replay = await recordOutcomeRoutingFeedback({ ...base, expected_revision: restarted.revision, execute: true });
+  assert.equal(replay.replayed, true);
+  await assert.rejects(recordOutcomeRoutingFeedback({ ...base, expected_revision: restarted.revision, execute: true, feedback: { ...feedback, subject: "altered" } }), /different content/);
+  const reconciled = await reconcileOutcomeRoutingState({
+    schema_version: OUTCOME_ROUTING_STATE_RECONCILE_REQUEST_SCHEMA,
+    runtime_root: runtimeRoot, goal_id: "company-goal",
+    expected_revision: restarted.revision,
+    updated_at: "2026-09-17T00:03:00Z", execute: true,
+    observations: [{ target_key: "activation_delivery", todo_id: "todo_activation", status: "open" }],
+  });
+  const next = planOutcomeRoutingNextCycle({
+    schema_version: "outcome_routing_next_cycle_request_v0",
+    goal_id: "company-goal", state: (await loadOutcomeRoutingState(request(runtimeRoot))).state,
+  });
+  assert.equal((next.state as Record<string, any>).feedback[0].feedback_id, feedback.feedback_id);
+  assert.equal((next.state as Record<string, any>).work_items.length, 1);
+  assert.equal((reconciled.state as Record<string, any>).reconciliation.observations[0].next_status, "ready");
 });
 
 test("Todo bindings are revisioned profile state with exact work identity", async (t) => {

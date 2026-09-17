@@ -53,6 +53,7 @@ function state() {
         authority_tier: "C",
         ai_capable: false,
         human_identity_required: true,
+        owner: "employee:customer-success",
         target_key: "human_execution",
       },
     ],

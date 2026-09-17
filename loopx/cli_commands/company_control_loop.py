@@ -60,6 +60,15 @@ def register_company_control_loop_command(
     )
     add_subcommand_format(show)
     show.add_argument("--goal-id", required=True, help="Goal that owns the company state.")
+    feedback = actions.add_parser(
+        "record-feedback",
+        help="Persist sourced human feedback into the current planning cycle.",
+    )
+    add_subcommand_format(feedback)
+    feedback.add_argument("--goal-id", required=True)
+    feedback.add_argument("--feedback-json", required=True, help="Path to one feedback object.")
+    feedback.add_argument("--expected-revision", required=True)
+    feedback.add_argument("--execute", action="store_true")
     sync = actions.add_parser(
         "sync-todos",
         help="Create missing LoopX Todos from persisted company work and verify readback.",
@@ -179,7 +188,7 @@ def handle_company_control_loop_command(
         return None
     try:
         command = args.company_control_loop_command
-        if command in {"show", "sync-todos", "reconcile-todos", "next-cycle", "tick"}:
+        if command in {"show", "record-feedback", "sync-todos", "reconcile-todos", "next-cycle", "tick"}:
             if runtime_root is None:
                 raise ValueError("company control state requires a runtime root")
             projection = effect_runtime_result(
@@ -192,6 +201,22 @@ def handle_company_control_loop_command(
             )
             if command == "show":
                 payload = {"ok": True, **projection}
+            elif command == "record-feedback":
+                payload = {
+                    "ok": True,
+                    **effect_runtime_result(
+                        "work_item.outcome_routing_state.record_feedback",
+                        {
+                            "schema_version": "outcome_routing_state_feedback_request_v0",
+                            "runtime_root": str(runtime_root),
+                            "goal_id": args.goal_id,
+                            "expected_revision": args.expected_revision,
+                            "updated_at": datetime.now(UTC).isoformat(),
+                            "feedback": _read_json_object(args.feedback_json),
+                            "execute": bool(args.execute),
+                        },
+                    ),
+                }
             elif command == "next-cycle":
                 payload = {
                     "ok": True,
@@ -452,7 +477,10 @@ def _sync_todos(
                 role=role,
                 text=f"[P1] {todo_projection.get('text')}",
                 status="open",
-                note=f"Acceptance: {todo_projection.get('acceptance')}",
+                note=(
+                    f"Owner: {todo_projection['owner']}\n"
+                    if todo_projection.get("owner") else ""
+                ) + f"Acceptance: {todo_projection.get('acceptance')}",
                 task_class=task_class,
                 action_kind=str(todo_projection.get("action_kind") or ""),
                 task_repository=task_repository if role == "agent" else None,

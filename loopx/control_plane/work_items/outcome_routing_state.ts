@@ -32,6 +32,8 @@ export const OUTCOME_ROUTING_STATE_RECONCILIATION_SCHEMA =
   "outcome_routing_state_reconciliation_v0";
 export const OUTCOME_ROUTING_STATE_BIND_REQUEST_SCHEMA =
   "outcome_routing_state_bind_request_v0";
+export const OUTCOME_ROUTING_STATE_FEEDBACK_REQUEST_SCHEMA =
+  "outcome_routing_state_feedback_request_v0";
 export const OUTCOME_ROUTING_NEXT_CYCLE_REQUEST_SCHEMA =
   "outcome_routing_next_cycle_request_v0";
 export const OUTCOME_ROUTING_NEXT_CYCLE_SCHEMA =
@@ -282,6 +284,76 @@ export async function bindOutcomeRoutingTodos(value: unknown): Promise<JsonObjec
     const readback = await readStoredState(path, goalId);
     if (!readback || readback.revision !== nextRevision) throw new Error("outcome routing Todo binding readback failed");
     return { schema_version: OUTCOME_ROUTING_STATE_STORE_RESULT_SCHEMA, operation: "bind", goal_id: goalId, path, state: readback, written: true, replayed: false };
+  });
+}
+
+export async function recordOutcomeRoutingFeedback(value: unknown): Promise<JsonObject> {
+  const request = requireJsonObject(value, "outcome_routing_state_feedback params");
+  if (request.schema_version !== OUTCOME_ROUTING_STATE_FEEDBACK_REQUEST_SCHEMA) {
+    throw new EffectRuntimeRequestError("outcome routing feedback request schema mismatch");
+  }
+  const runtimeRoot = requireNonEmptyString(request.runtime_root, "runtime_root");
+  const goalId = requireNonEmptyString(request.goal_id, "goal_id");
+  const expectedRevision = requireNonEmptyString(request.expected_revision, "expected_revision");
+  const updatedAt = requireNonEmptyString(request.updated_at, "updated_at");
+  const execute = requireBoolean(request.execute, "execute");
+  const path = outcomeRoutingStatePath(runtimeRoot, goalId);
+  return await withFileMutationLock(path, async () => {
+    const existing = await readStoredState(path, goalId);
+    if (!existing) throw new EffectRuntimeRequestError("persisted outcome routing state does not exist");
+    if (existing.revision !== expectedRevision) {
+      throw new EffectRuntimeConflictError("outcome routing state revision changed");
+    }
+    const projection = requireJsonObject(existing.projection, "stored projection");
+    const priorFeedback = Array.isArray(projection.feedback) ? projection.feedback : [];
+    const incoming = requireJsonObject(request.feedback, "feedback");
+    const feedbackId = requireNonEmptyString(incoming.feedback_id, "feedback.feedback_id");
+    const duplicate = priorFeedback.find((item) =>
+      requireJsonObject(item, "stored feedback").feedback_id === feedbackId
+    );
+    if (duplicate) {
+      const { disposition: _disposition, ...prior } = requireJsonObject(duplicate, "stored feedback");
+      const normalized = projectOutcomeRoutingPlan({
+        schema_version: "outcome_routing_plan_request_v0",
+        direction: projection.direction,
+        cycle: projection.cycle,
+        outcomes: projection.outcomes,
+        work_items: projection.work_items,
+        feedback: [incoming],
+      });
+      const candidate = (normalized.feedback as JsonObject[])[0];
+      const { disposition: _candidateDisposition, ...comparable } = candidate;
+      if (JSON.stringify(stableValue(prior)) !== JSON.stringify(stableValue(comparable))) {
+        throw new EffectRuntimeConflictError("feedback_id already exists with different content");
+      }
+      return { schema_version: OUTCOME_ROUTING_STATE_STORE_RESULT_SCHEMA, operation: "record_feedback", goal_id: goalId, path, state: existing, written: false, replayed: true };
+    }
+    const nextProjection = projectOutcomeRoutingPlan({
+      schema_version: "outcome_routing_plan_request_v0",
+      direction: projection.direction,
+      cycle: projection.cycle,
+      outcomes: projection.outcomes,
+      work_items: projection.work_items,
+      feedback: [...priorFeedback, incoming],
+    });
+    const revisionContent: JsonObject = { projection: nextProjection };
+    if (Array.isArray(existing.todo_bindings) && existing.todo_bindings.length > 0) {
+      revisionContent.todo_bindings = existing.todo_bindings;
+    }
+    if (existing.reconciliation !== undefined) revisionContent.reconciliation = existing.reconciliation;
+    const nextState: JsonObject = {
+      ...existing,
+      projection: nextProjection,
+      revision: revision(revisionContent),
+      updated_at: updatedAt,
+    };
+    if (!execute) {
+      return { schema_version: OUTCOME_ROUTING_STATE_STORE_RESULT_SCHEMA, operation: "record_feedback", goal_id: goalId, path, dry_run: true, state: nextState, written: false, replayed: false };
+    }
+    await atomicWriteJson(path, nextState);
+    const readback = await readStoredState(path, goalId);
+    if (!readback || readback.revision !== nextState.revision) throw new Error("outcome routing feedback readback failed");
+    return { schema_version: OUTCOME_ROUTING_STATE_STORE_RESULT_SCHEMA, operation: "record_feedback", goal_id: goalId, path, dry_run: false, state: readback, written: true, replayed: false };
   });
 }
 
